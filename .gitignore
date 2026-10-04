@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+
+# Build output (recreate with build.bat / build_installer.bat)
+build/
+dist/
+installer/Output/
+*.spec

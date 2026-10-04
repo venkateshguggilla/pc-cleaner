@@ -1,0 +1,6 @@
+* text=auto
+# cmd.exe misparses batch files with LF line endings; Inno Setup scripts are Windows files too
+*.bat text eol=crlf
+*.iss text eol=crlf
+*.ico binary
+*.png binary
