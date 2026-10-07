@@ -1,36 +1,131 @@
-"""Tkinter user interface: pick items on the left, Analyze, then Clean."""
+"""User interface (tkinter + ttkbootstrap): pick items on the left, Analyze, then Clean."""
 from __future__ import annotations
 
+import ctypes
 import os
 import queue
 import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
-from tkinter.scrolledtext import ScrolledText
+from tkinter import filedialog, messagebox
+
+import ttkbootstrap as tb
 
 from . import largefiles, report, scheduler, settings, winutil
 from .cleaners import build_catalog, winapp2
 from .core import Target
 from .stats import Stats, human_size
 
-ON, OFF, PARTIAL = "☑", "☐", "▣"
+ON, OFF, PARTIAL = "\u2611", "\u2610", "\u25a3"
+THEMES = {"light": "bootstrap-light", "dark": "bootstrap-dark"}
+FONT = "Segoe UI"
 
 
-def _icon_path() -> str:
+def _asset(name: str) -> str:
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(base, "assets", "pccleaner.ico")
+    return os.path.join(base, "assets", name)
 
 
-class App(tk.Tk):
+_scale = 1.0  # display scaling (2.0 at 200%); set once the main window exists
+
+
+def px(n: float) -> int:
+    """Convert a layout size in 100%-scale pixels to real pixels for this display."""
+    return int(round(n * _scale))
+
+
+def _geometry(window, size, minsize):
+    window.geometry(f"{px(size[0])}x{px(size[1])}")
+    window.minsize(px(minsize[0]), px(minsize[1]))
+
+
+def _colors():
+    return tb.Style().colors
+
+
+def _mix(color: str, other: str, amount: float) -> str:
+    """Blend two #rrggbb colours: amount=0 gives `color`, 1 gives `other`."""
+    a = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(other[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * amount):02x}" for x, y in zip(a, b))
+
+
+def _is_dark() -> bool:
+    bg = _colors().bg
+    return sum(int(bg[i:i + 2], 16) for i in (1, 3, 5)) < 384
+
+
+def _match_title_bar(window) -> None:
+    """Dark title bar in dark mode (the window frame isn't drawn by tkinter)."""
+    dark = _is_dark()
+    if getattr(window, "_dark_frame", False) == dark:
+        return  # already matching (windows start with a light frame)
+    try:
+        window.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
+        winutil.set_dark_title_bar(hwnd, dark)
+        window._dark_frame = dark
+        if window.winfo_viewable():
+            # Windows 10 only repaints the frame when the window is shown again
+            window.withdraw()
+            window.deiconify()
+    except (OSError, tk.TclError, AttributeError):
+        pass
+
+
+APP_NAMES = {
+    "chrome.exe": "Google Chrome", "msedge.exe": "Microsoft Edge", "brave.exe": "Brave", "vivaldi.exe": "Vivaldi",
+    "opera.exe": "Opera", "ulaa.exe": "Zoho Ulaa", "firefox.exe": "Mozilla Firefox", "vlc.exe": "VLC",
+    "wmplayer.exe": "Windows Media Player", "mpc-hc.exe": "MPC-HC", "mpc-hc64.exe": "MPC-HC",
+    "mpc-be.exe": "MPC-BE", "mpc-be64.exe": "MPC-BE", "potplayermini.exe": "PotPlayer",
+    "potplayermini64.exe": "PotPlayer", "winword.exe": "Microsoft Word", "excel.exe": "Microsoft Excel",
+    "powerpnt.exe": "Microsoft PowerPoint", "msaccess.exe": "Microsoft Access", "mspub.exe": "Microsoft Publisher",
+    "visio.exe": "Microsoft Visio", "onenote.exe": "Microsoft OneNote", "notepad++.exe": "Notepad++",
+    "code.exe": "Visual Studio Code", "code - insiders.exe": "VS Code Insiders", "vscodium.exe": "VSCodium",
+    "cursor.exe": "Cursor", "photos.exe": "Photos", "microsoft.photos.exe": "Photos",
+    "mspaint.exe": "Paint", "wordpad.exe": "WordPad",
+}
+
+
+def app_name(exe: str) -> str:
+    return APP_NAMES.get(exe.lower(), exe.rsplit(".", 1)[0])
+
+
+def _app_list(exes) -> str:
+    return "\n".join(f"  • {name}" for name in sorted({app_name(p) for p in exes}))
+
+
+def _warning_text() -> str:
+    """Bootstrap's warning yellow is unreadable as text on white; darken it in light mode."""
+    c = _colors()
+    return c.warning if _is_dark() else _mix(c.warning, "#000000", 0.45)
+
+
+def _scrolled(parent, widget_factory):
+    """Pack a widget with a vertical scrollbar into `parent`; returns the widget."""
+    widget = widget_factory(parent)
+    bar = tb.Scrollbar(parent, command=widget.yview, bootstyle="round")
+    widget.configure(yscrollcommand=bar.set)
+    bar.pack(side="right", fill="y")
+    widget.pack(side="left", fill="both", expand=True)
+    return widget
+
+
+class App(tb.Window):
     def __init__(self):
-        super().__init__()
-        self.title("PC Cleaner")
-        self.geometry("1060x680")
-        self.minsize(880, 540)
+        self.ui_theme = settings.load().get("theme", "light")
+        super().__init__(title="PC Cleaner", themename=THEMES.get(self.ui_theme, THEMES["light"]), iconphoto=None)
+        global _scale
+        _scale = max(1.0, self.winfo_fpixels("1i") / 96)
+        # fit the screen: 1140x730 at 100%, smaller if the (scaled) screen is smaller
+        width = min(1140, int(self.winfo_screenwidth() / _scale * 0.92))
+        height = min(730, int(self.winfo_screenheight() / _scale * 0.85))
+        _geometry(self, (width, height), (min(940, width), min(580, height)))
+        if hasattr(self, "place_window_center"):
+            self.place_window_center()
         try:
-            self.iconbitmap(default=_icon_path())  # default= also applies to dialogs
+            self.iconbitmap(default=_asset("pccleaner.ico"))  # default= also applies to dialogs
         except tk.TclError:
             pass
 
@@ -39,99 +134,159 @@ class App(tk.Tk):
         self.by_id = {t.id: t for t in self.targets}
         self.checked = self._load_selection()
         self.events: queue.Queue = queue.Queue()
-        self.busy = False
+        self.working = False
         self.mode = "scan"
+        self.theme_listeners: list = []
 
         self._build_ui()
+        self._apply_colors()
         self._refresh_tree()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.after(100, self._drain_events)
+        self._drain_job = self.after(100, self._drain_events)
 
     # ---- layout --------------------------------------------------------------
 
     def _build_ui(self):
-        style = ttk.Style(self)
-        if "vista" in style.theme_names():
-            style.theme_use("vista")
-        style.configure("Treeview", rowheight=24)
+        style = tb.Style()
+        style.configure("Treeview", rowheight=px(26))
+        style.configure("Treeview.Heading", font=(FONT, 9, "bold"))
 
-        root = ttk.Frame(self, padding=10)
+        root = tb.Frame(self, padding=(px(18), px(14)))
         root.pack(fill="both", expand=True)
 
-        header = ttk.Frame(root)
+        # header: logo + title on the left, tools + admin + theme on the right
+        header = tb.Frame(root)
         header.pack(fill="x")
-        ttk.Label(header, text="PC Cleaner", font=("Segoe UI", 16, "bold")).pack(side="left")
-        self.winapp2_btn = ttk.Button(header, text="Update winapp2.ini", command=self._update_winapp2)
-        self.winapp2_btn.pack(side="left", padx=(16, 0))
-        ttk.Button(header, text="Schedule...", command=lambda: ScheduleDialog(self)).pack(side="left", padx=6)
-        ttk.Button(header, text="Reports", command=self._open_reports).pack(side="left")
-        ttk.Button(header, text="Large files...", command=lambda: LargeFilesWindow(self)).pack(side="left", padx=6)
+        try:
+            logo = tk.PhotoImage(file=_asset("pccleaner.png"))  # 256 px
+            self.logo = logo.subsample(max(1, round(256 / px(40))))
+            tb.Label(header, image=self.logo).pack(side="left", padx=(0, px(12)))
+        except tk.TclError:
+            pass
+        titles = tb.Frame(header)
+        titles.pack(side="left")
+        tb.Label(titles, text="PC Cleaner", font=(FONT, 16, "bold")).pack(anchor="w")
+        tb.Label(titles, text="Remove junk files and privacy traces", bootstyle="secondary",
+                 font=(FONT, 9)).pack(anchor="w")
+
+        self.theme_btn = tb.Button(header, bootstyle="secondary-ghost", icon_only=True,
+                                   icon="sun" if self.ui_theme == "dark" else "moon-stars",
+                                   command=self._toggle_theme)
+        self.theme_btn.pack(side="right")
+        tb.ToolTip(self.theme_btn, text="Switch light / dark theme")
         if self.is_admin:
-            ttk.Label(header, text="Running as administrator", foreground="#2e7d32").pack(side="right")
+            tb.Label(header, text="  Administrator  ", bootstyle="inverse-success",
+                     font=(FONT, 9, "bold")).pack(side="right", padx=8)
         else:
-            ttk.Button(header, text="Restart as administrator", command=self._elevate).pack(side="right")
-            ttk.Label(header, text="Some Windows items need administrator rights.",
-                      foreground="#a15c00").pack(side="right", padx=8)
+            admin = tb.Button(header, text="Run as administrator", bootstyle="warning-outline",
+                              icon="shield-lock", command=self._elevate)
+            admin.pack(side="right", padx=8)
+            tb.ToolTip(admin, text="Some Windows items (system temp, logs, update caches) need administrator rights.")
+        tb.Separator(header, orient="vertical").pack(side="right", fill="y", padx=6, pady=6)
+        tools = (("winapp2 rules", "cloud-download", self._update_winapp2,
+                  "Download community cleaning rules for thousands of programs"),
+                 ("Reports", "journal-text", self._open_reports, "Open the folder with cleaning reports"),
+                 ("Schedule", "calendar-check", lambda: ScheduleDialog(self), "Clean automatically every day or week"),
+                 ("Large files", "hdd", lambda: LargeFilesWindow(self), "Find the biggest files on your PC"))
+        for text, icon, command, tip in tools:
+            btn = tb.Button(header, text=text, icon=icon, bootstyle="secondary-ghost", command=command)
+            btn.pack(side="right", padx=2)
+            tb.ToolTip(btn, text=tip)
+            if icon == "cloud-download":
+                self.winapp2_btn = btn
 
-        panes = ttk.PanedWindow(root, orient="horizontal")
-        panes.pack(fill="both", expand=True, pady=8)
+        tb.Separator(root).pack(fill="x", pady=px(10))
 
-        # left: checklist
-        left = ttk.Frame(panes)
+        panes = tb.Panedwindow(root, orient="horizontal")
+        panes.pack(fill="both", expand=True)
+
+        # left: checklist card
+        left = tb.Labelframe(panes, text=" What to clean ", padding=px(8), width=px(340))
         panes.add(left, weight=1)
-        picks = ttk.Frame(left)
-        picks.pack(side="bottom", fill="x", pady=(6, 0))
-        ttk.Button(picks, text="Defaults", command=lambda: self._select("default")).pack(side="left")
-        ttk.Button(picks, text="All", command=lambda: self._select("all")).pack(side="left", padx=4)
-        ttk.Button(picks, text="None", command=lambda: self._select("none")).pack(side="left")
-        self.desc = ttk.Label(left, text="Click an item to tick or untick it.", wraplength=320,
-                              justify="left", foreground="#555")
-        self.desc.pack(side="bottom", fill="x", pady=(6, 0))
-        self.tree = ttk.Treeview(left, show="tree", selectmode="browse")
-        sb = ttk.Scrollbar(left, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        self.tree.pack(side="left", fill="both", expand=True)
-        self.tree.tag_configure("disabled", foreground="#999")
-        self.tree.tag_configure("group", font=("Segoe UI", 9, "bold"))
+        picks = tb.Frame(left)
+        picks.pack(side="bottom", fill="x", pady=(px(8), 0))
+        for text, which, icon in (("Recommended", "default", "check-all"), ("All", "all", "check2-square"),
+                                  ("None", "none", "square")):
+            tb.Button(picks, text=text, icon=icon, bootstyle="secondary-outline",
+                      command=lambda w=which: self._select(w)).pack(side="left", padx=(0, px(6)))
+        self.desc = tb.Label(left, text="Click an item to tick or untick it. Select it to see what it does.",
+                             wraplength=px(320), justify="left", bootstyle="secondary", font=(FONT, 9))
+        self.desc.pack(side="bottom", fill="x", pady=(px(8), 0))
+        self.desc.bind("<Configure>", lambda e: self.desc.configure(wraplength=max(px(100), e.width - px(4))))
+        tree_box = tb.Frame(left)
+        tree_box.pack(fill="both", expand=True)
+        self.tree = _scrolled(tree_box, lambda p: tb.Treeview(p, show="tree", selectmode="browse"))
         self.tree.bind("<Button-1>", self._on_tree_click)
         self.tree.bind("<space>", lambda e: self._toggle(self.tree.focus()))
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
         self._populate_tree()
 
-        # right: results + log
-        right = ttk.Frame(panes)
+        # right: summary + results + activity
+        right = tb.Frame(panes, padding=(px(14), 0, 0, 0))
         panes.add(right, weight=3)
-        self.summary = ttk.Label(right, text="Press Analyze to see what can be cleaned.",
-                                 font=("Segoe UI", 11, "bold"))
-        self.summary.pack(fill="x", pady=(0, 6))
-        cols = ("item", "found", "size", "status")
-        res_frame = ttk.Frame(right)
-        res_frame.pack(fill="both", expand=True)
-        self.results = ttk.Treeview(res_frame, columns=cols, show="headings")
-        for col, title, width, anchor in (("item", "Item", 260, "w"), ("found", "Found", 150, "e"),
-                                          ("size", "Size", 90, "e"), ("status", "Status", 280, "w")):
+        hero = tb.Frame(right)
+        hero.pack(fill="x", pady=(0, px(8)))
+        self.hero_value = tb.Label(hero, text="Ready", font=(FONT, 20, "bold"), bootstyle="primary")
+        self.hero_value.pack(side="left")
+        self.hero_caption = tb.Label(hero, text="Press Analyze to see how much space can be freed.",
+                                     bootstyle="secondary", font=(FONT, 10))
+        self.hero_caption.pack(side="left", padx=px(12), pady=(px(8), 0))
+
+        res_box = tb.Frame(right)
+        res_box.pack(fill="both", expand=True)
+        self.results = _scrolled(res_box, lambda p: tb.Treeview(p, columns=("item", "found", "size", "status"),
+                                                                 show="headings"))
+        for col, title, width, anchor in (("item", "Item", 290, "w"), ("found", "Found", 140, "e"),
+                                          ("size", "Size", 90, "e"), ("status", "    Status", 220, "w")):
             self.results.heading(col, text=title, anchor=anchor)
-            self.results.column(col, width=width, anchor=anchor, stretch=(col in ("item", "status")))
-        rsb = ttk.Scrollbar(res_frame, command=self.results.yview)
-        self.results.configure(yscrollcommand=rsb.set)
-        rsb.pack(side="right", fill="y")
-        self.results.pack(side="left", fill="both", expand=True)
+            self.results.column(col, width=px(width), minwidth=px(60), anchor=anchor,
+                                stretch=(col in ("item", "status")))
 
-        self.log = ScrolledText(right, height=7, state="disabled", font=("Consolas", 9))
-        self.log.pack(fill="x", pady=(6, 0))
+        activity = tb.Labelframe(right, text=" Activity ", padding=px(6))
+        activity.pack(fill="x", pady=(px(10), 0))
+        self.log = _scrolled(activity, lambda p: tb.Text(p, height=4, wrap="word", font=("Consolas", 9),
+                                                         relief="flat", state="disabled"))
 
-        # bottom: progress + actions
-        bottom = ttk.Frame(root)
+        # footer: status, progress, actions
+        tb.Separator(root).pack(fill="x", pady=(px(12), px(10)))
+        bottom = tb.Frame(root)
         bottom.pack(fill="x")
-        self.clean_btn = ttk.Button(bottom, text="Run Cleaner", command=lambda: self._start("clean"))
-        self.clean_btn.pack(side="right")
-        self.scan_btn = ttk.Button(bottom, text="Analyze", command=lambda: self._start("scan"))
-        self.scan_btn.pack(side="right", padx=6)
-        self.status = ttk.Label(bottom, text="Ready", width=40)
+        self.clean_btn = tb.Button(bottom, text="Run Cleaner", icon="stars", bootstyle="primary",
+                                   command=lambda: self._start("clean"))
+        self.clean_btn.pack(side="right", ipadx=px(10))
+        self.scan_btn = tb.Button(bottom, text="Analyze", icon="search", bootstyle="primary-outline",
+                                  command=lambda: self._start("scan"))
+        self.scan_btn.pack(side="right", padx=px(8), ipadx=px(10))
+        self.status = tb.Label(bottom, text="Ready", bootstyle="secondary", width=36)
         self.status.pack(side="left")
-        self.progress = ttk.Progressbar(bottom, mode="determinate")
-        self.progress.pack(side="left", fill="x", expand=True, padx=8)
+        self.progress = tb.Progressbar(bottom, mode="determinate", bootstyle="success-striped")
+        self.progress.pack(side="left", fill="x", expand=True, padx=px(12))
+
+    def _apply_colors(self):
+        """Colours that ttk tags can't take from the theme automatically."""
+        c = _colors()
+        # soft primary tint for selected rows instead of the heavy default
+        tint = _mix(c.primary, c.bg, 0.65 if _is_dark() else 0.82)
+        tb.Style().map("Treeview", background=[("selected", tint)], foreground=[("selected", c.fg)])
+        self.tree.tag_configure("group", font=(FONT, 10, "bold"))
+        self.tree.tag_configure("disabled", foreground=c.secondary)
+        self.results.tag_configure("ok", foreground=c.fg)
+        self.results.tag_configure("cleaned", foreground=c.success)
+        self.results.tag_configure("note", foreground=_warning_text())
+        self.results.tag_configure("empty", foreground=c.secondary)
+        _match_title_bar(self)
+        for listener in list(self.theme_listeners):
+            listener()
+
+    def _toggle_theme(self):
+        self.ui_theme = "light" if self.ui_theme == "dark" else "dark"
+        tb.Style().theme_use(THEMES[self.ui_theme])
+        self.theme_btn.configure(icon="sun" if self.ui_theme == "dark" else "moon-stars")
+        self._apply_colors()
+        try:
+            settings.update(theme=self.ui_theme)
+        except OSError:
+            pass
 
     # ---- checklist -------------------------------------------------------------
 
@@ -174,7 +329,7 @@ class App(tk.Tk):
                     self.tree.item(t.id, text=f"{OFF}  {t.name}  (admin)", tags=("disabled",))
 
     def _toggle(self, iid: str):
-        if self.busy or not iid:
+        if self.working or not iid:
             return
         if iid.startswith("g:"):
             kids = [self.by_id[k] for k in self.tree.get_children(iid) if self._usable(self.by_id[k])]
@@ -204,7 +359,7 @@ class App(tk.Tk):
             self.desc.configure(text=t.description + note)
 
     def _select(self, which: str):
-        if self.busy:
+        if self.working:
             return
         for t in self.targets:
             # "All" covers the built-in items; community winapp2 rules are ticked deliberately
@@ -214,7 +369,7 @@ class App(tk.Tk):
         self._save_selection()
 
     def _update_winapp2(self):
-        if self.busy:
+        if self.working:
             return
         if not messagebox.askyesno(
                 "winapp2.ini",
@@ -222,7 +377,7 @@ class App(tk.Tk):
                 f"from github.com/MoscaDotTo/Winapp2?\n\nIt is saved to {winapp2.WINAPP2_FILE}. "
                 "Rules for programs on this PC appear unticked in 'winapp2' groups.", parent=self):
             return
-        self.busy = True
+        self.working = True
         self.winapp2_btn.state(["disabled"])
         self.status.configure(text="Downloading winapp2.ini...")
 
@@ -236,7 +391,7 @@ class App(tk.Tk):
         threading.Thread(target=work, daemon=True).start()
 
     def _winapp2_done(self, result, catalog):
-        self.busy = False
+        self.working = False
         self.winapp2_btn.state(["!disabled"])
         self.status.configure(text="Ready")
         if isinstance(result, Exception):
@@ -267,42 +422,101 @@ class App(tk.Tk):
     # ---- running a scan / clean ------------------------------------------------------
 
     def _start(self, mode: str):
-        if self.busy:
+        if self.working:
             return
         selected = [t for t in self.targets if self.checked.get(t.id) and self._usable(t)]
         if not selected:
             messagebox.showinfo("PC Cleaner", "Tick at least one item first.", parent=self)
             return
 
-        if mode == "clean":
-            running = winutil.running_processes()
-            blocked = [t for t in selected if any(p in running for p in t.processes)]
-            if blocked:
-                apps = sorted({p for t in blocked for p in t.processes if p in running})
-                names = "\n".join(f"  • {t.group}: {t.name}" for t in blocked)
-                if not messagebox.askyesno(
-                        "Programs are running",
-                        f"These programs are open: {', '.join(apps)}\n\n"
-                        f"Close them to clean their data. These items will be skipped:\n{names}\n\n"
-                        "Continue with the remaining items?", parent=self):
-                    return
+        if mode == "scan":
+            self._run(mode, selected)
+            return
+
+        running = winutil.running_processes()
+        blocked = [t for t in selected if any(p in running for p in t.processes)]
+        to_close = sorted({p for t in blocked for p in t.processes if p in running})
+        close_apps = False
+        if blocked:
+            answer = messagebox.askyesnocancel(
+                "Close programs?",
+                f"These programs are open, so their data can't be cleaned:\n\n{_app_list(to_close)}\n\n"
+                "Yes  -  close them now and clean everything (save your work in them first)\n"
+                "No  -  leave them open and skip their items\n"
+                "Cancel  -  go back", icon="question", parent=self)
+            if answer is None:
+                return
+            close_apps = answer
+            if not close_apps:
                 selected = [t for t in selected if t not in blocked]
                 if not selected:
                     return
-            if not messagebox.askyesno(
-                    "Confirm cleaning",
-                    f"Permanently delete the data for {len(selected)} selected item(s)?\n\n"
-                    "This cannot be undone.", icon="warning", parent=self):
-                return
+        if not messagebox.askyesno(
+                "Confirm cleaning",
+                f"Permanently delete the data for {len(selected)} selected item(s)?\n\n"
+                "This cannot be undone.", icon="warning", parent=self):
+            return
+        if close_apps:
+            self._close_then_clean(selected, to_close)
+        else:
+            self._run("clean", selected)
 
-        self.busy = True
+    def _set_working(self, working: bool):
+        self.working = working
+        for button in (self.scan_btn, self.clean_btn):
+            button.state(["disabled"] if working else ["!disabled"])
+
+    def _close_then_clean(self, selected: list[Target], exes: list[str]):
+        """Close the programs gracefully in the background, then clean."""
+        self._set_working(True)
+        self.hero_value.configure(text="Closing programs...", bootstyle="primary")
+        self.hero_caption.configure(text=", ".join(app_name(p) for p in exes))
+        self._log(f"Closing {', '.join(app_name(p) for p in exes)}...")
+
+        def work():
+            remaining = winutil.close_processes(exes)
+            self.call_soon(self._after_close, selected, exes, remaining, False)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _after_close(self, selected: list[Target], exes: list[str], remaining: set[str], forced: bool):
+        if remaining and not forced:
+            if messagebox.askyesno(
+                    "Force close?",
+                    f"These programs did not close:\n\n{_app_list(remaining)}\n\n"
+                    "They may be asking whether to save changes, or still running in the background "
+                    "(for example a browser with background apps or startup boost).\n\n"
+                    "Yes  -  force close them (unsaved work in them is lost)\n"
+                    "No  -  leave them running and skip their items", icon="warning", parent=self):
+                self._log(f"Force closing {', '.join(app_name(p) for p in sorted(remaining))}...")
+
+                def work():
+                    still = winutil.kill_processes(remaining)
+                    self.call_soon(self._after_close, selected, exes, still, True)
+
+                threading.Thread(target=work, daemon=True).start()
+                return
+        closed = [p for p in exes if p not in remaining]
+        if closed:
+            self._log(f"Closed: {', '.join(app_name(p) for p in closed)}")
+        if remaining:
+            self._log(f"Still running, their items are skipped: {', '.join(app_name(p) for p in sorted(remaining))}")
+            selected = [t for t in selected if not any(p in remaining for p in t.processes)]
+        self._set_working(False)
+        if selected:
+            self._run("clean", selected)
+        else:
+            self.hero_value.configure(text="Ready", bootstyle="primary")
+            self.hero_caption.configure(text="Nothing was cleaned.")
+
+    def _run(self, mode: str, selected: list[Target]):
+        self._set_working(True)
         self.mode = mode
-        self.scan_btn.state(["disabled"])
-        self.clean_btn.state(["disabled"])
         self.results.delete(*self.results.get_children())
         self.run_rows: list[tuple[str, Stats]] = []
         self.progress.configure(maximum=len(selected), value=0)
-        self.summary.configure(text="Analyzing..." if mode == "scan" else "Cleaning...")
+        self.hero_value.configure(text="Analyzing..." if mode == "scan" else "Cleaning...", bootstyle="primary")
+        self.hero_caption.configure(text=f"{len(selected)} item(s)")
         self._log(f"--- {'Analysis' if mode == 'scan' else 'Cleaning'} started ---")
         threading.Thread(target=self._work, args=(mode, selected), daemon=True).start()
 
@@ -326,10 +540,18 @@ class App(tk.Tk):
     def _drain_events(self):
         try:
             while True:
-                self._handle(*self.events.get_nowait())
+                kind, a, b = self.events.get_nowait()
+                if kind == "call":
+                    a(*b)  # function queued from a worker thread, run on the UI thread
+                else:
+                    self._handle(kind, a, b)
         except queue.Empty:
             pass
-        self.after(80, self._drain_events)
+        self._drain_job = self.after(80, self._drain_events)
+
+    def call_soon(self, func, *args):
+        """Thread-safe: run func(*args) on the UI thread."""
+        self.events.put(("call", func, args))
 
     def _handle(self, kind, a, b):
         if kind == "winapp2":
@@ -348,22 +570,29 @@ class App(tk.Tk):
             status = "; ".join(b.messages)
             if b.skipped:
                 status = (f"{b.skipped:,} in use / denied - skipped" + ("; " + status if status else ""))
-            if not status:
-                status = "Nothing found" if not b.found else ("OK" if self.mode == "scan" else "Cleaned")
-            self.results.insert("", "end", values=(f"{a.group}: {a.name}", ", ".join(found) or "-",
-                                                   human_size(b.bytes) if b.bytes else "-", status))
+            if status:
+                tag = "note"
+            elif not b.found:
+                status, tag = "Nothing found", "empty"
+            else:
+                status, tag = ("OK", "ok") if self.mode == "scan" else ("Cleaned", "cleaned")
+            self.results.insert("", "end", tags=(tag,),
+                                values=(f"{a.group}: {a.name}", ", ".join(found) or "-",
+                                        human_size(b.bytes) if b.bytes else "-", f"    {status}"))
             for msg in b.messages:
                 self._log(f"{a.group} / {a.name}: {msg}")
         elif kind == "done":
             mode, total = a, b
-            self.busy = False
-            self.scan_btn.state(["!disabled"])
-            self.clean_btn.state(["!disabled"])
+            self._set_working(False)
             self.status.configure(text="Ready")
-            verb = "can be freed" if mode == "scan" else "freed"
-            self.summary.configure(
-                text=f"{'Analysis' if mode == 'scan' else 'Cleaning'} complete — {human_size(total.bytes)} {verb}"
-                     f"  ({total.files:,} files, {total.entries:,} history entries)")
+            self.progress.configure(value=self.progress.cget("maximum"))
+            counts = f"{total.files:,} files \u00b7 {total.entries:,} history entries"
+            if mode == "scan":
+                self.hero_value.configure(text=human_size(total.bytes), bootstyle="primary")
+                self.hero_caption.configure(text=f"can be freed  \u00b7  {counts}")
+            else:
+                self.hero_value.configure(text=f"{human_size(total.bytes)} freed", bootstyle="success")
+                self.hero_caption.configure(text=counts)
             if total.skipped:
                 self._log(f"{total.skipped:,} items were in use or access was denied and were skipped.")
             if mode == "clean":
@@ -394,86 +623,102 @@ class App(tk.Tk):
         else:
             messagebox.showwarning("PC Cleaner", "Could not restart as administrator.", parent=self)
 
+    def destroy(self):
+        try:
+            self.after_cancel(self._drain_job)
+        except (AttributeError, tk.TclError):
+            pass
+        super().destroy()
+
     def _on_close(self):
         self._save_selection()
         self.destroy()
 
 
-class ScheduleDialog(tk.Toplevel):
+class ScheduleDialog(tb.Toplevel):
     """Create, change or remove the scheduled cleaning task."""
 
     def __init__(self, app: App):
-        super().__init__(app)
+        super().__init__(title="Scheduled cleaning", resizable=(False, False), transient=app, iconphoto=None)
         self.app = app
-        self.title("Scheduled cleaning")
-        self.resizable(False, False)
-        self.transient(app)
-        self.grab_set()
 
         saved = settings.load().get("schedule") or {}
         self.items = app.ticked_targets()
 
-        frame = ttk.Frame(self, padding=14)
+        frame = tb.Frame(self, padding=px(20))
         frame.pack(fill="both", expand=True)
-        self.status = ttk.Label(frame, text="Checking current schedule...", font=("Segoe UI", 10, "bold"))
-        self.status.grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 10))
+        tb.Label(frame, text="Scheduled cleaning", font=(FONT, 14, "bold")).grid(
+            row=0, column=0, columnspan=4, sticky="w")
+        self.status = tb.Label(frame, text="Checking current schedule...", bootstyle="secondary")
+        self.status.grid(row=1, column=0, columnspan=4, sticky="w", pady=(2, 14))
 
-        ttk.Label(frame, text="Run:").grid(row=1, column=0, sticky="w")
+        tb.Label(frame, text="Run", font=(FONT, 10, "bold")).grid(row=2, column=0, sticky="nw", padx=(0, 14))
         self.frequency = tk.StringVar(value=saved.get("frequency", "weekly"))
-        ttk.Radiobutton(frame, text="Every day", value="daily", variable=self.frequency,
-                        command=self._sync).grid(row=1, column=1, sticky="w")
-        ttk.Radiobutton(frame, text="Every week on", value="weekly", variable=self.frequency,
-                        command=self._sync).grid(row=2, column=1, sticky="w")
+        tb.Radiobutton(frame, text="Every day", value="daily", variable=self.frequency,
+                       command=self._sync).grid(row=2, column=1, sticky="w")
+        tb.Radiobutton(frame, text="Every week on", value="weekly", variable=self.frequency,
+                       command=self._sync).grid(row=3, column=1, sticky="w", pady=(6, 0))
         self.day = tk.StringVar(value=saved.get("day", "Sunday"))
-        self.day_box = ttk.Combobox(frame, textvariable=self.day, values=scheduler.DAYS, state="readonly", width=12)
-        self.day_box.grid(row=2, column=2, sticky="w", padx=4)
+        self.day_box = tb.Combobox(frame, textvariable=self.day, values=scheduler.DAYS, state="readonly", width=12)
+        self.day_box.grid(row=3, column=2, sticky="w", padx=6, pady=(6, 0))
 
         hour, minute = (saved.get("time") or "20:00").split(":")
-        ttk.Label(frame, text="At:").grid(row=3, column=0, sticky="w", pady=(8, 0))
-        at = ttk.Frame(frame)
-        at.grid(row=3, column=1, columnspan=2, sticky="w", pady=(8, 0))
-        self.hour = ttk.Spinbox(at, from_=0, to=23, width=4, format="%02.0f", wrap=True)
+        tb.Label(frame, text="At", font=(FONT, 10, "bold")).grid(row=4, column=0, sticky="w", pady=(12, 0))
+        at = tb.Frame(frame)
+        at.grid(row=4, column=1, columnspan=3, sticky="w", pady=(12, 0))
+        self.hour = tb.Spinbox(at, from_=0, to=23, width=4, format="%02.0f", wrap=True)
         self.hour.set(hour)
         self.hour.pack(side="left")
-        ttk.Label(at, text=":").pack(side="left")
-        self.minute = ttk.Spinbox(at, from_=0, to=59, width=4, format="%02.0f", wrap=True, increment=5)
+        tb.Label(at, text=" : ").pack(side="left")
+        self.minute = tb.Spinbox(at, from_=0, to=59, width=4, format="%02.0f", wrap=True, increment=5)
         self.minute.set(minute)
         self.minute.pack(side="left")
-        ttk.Label(at, text="(if the PC is off, it runs at next start-up)", foreground="#555").pack(side="left", padx=8)
+        tb.Label(at, text="If the PC is off, it runs at the next start-up.",
+                 bootstyle="secondary").pack(side="left", padx=12)
 
-        ttk.Label(frame, text=f"It will clean the {len(self.items)} item(s) ticked now:").grid(
-            row=4, column=0, columnspan=4, sticky="w", pady=(12, 4))
-        box = tk.Listbox(frame, height=8, width=62, activestyle="none")
+        tb.Label(frame, text=f"Cleans the {len(self.items)} item(s) ticked now", font=(FONT, 10, "bold")).grid(
+            row=5, column=0, columnspan=4, sticky="w", pady=(16, 6))
+        box_frame = tb.Frame(frame)
+        box_frame.grid(row=6, column=0, columnspan=4, sticky="we")
+        box = _scrolled(box_frame, lambda p: tb.Listbox(p, height=8, width=64, activestyle="none", relief="flat"))
         for t in self.items:
-            box.insert("end", f"{t.group}: {t.name}")
-        box.grid(row=5, column=0, columnspan=4, sticky="we")
+            box.insert("end", f"  {t.group}: {t.name}")
 
-        notes = ["Programs that are open at that time are skipped. Each run saves a report (Reports button)."]
+        notes = ["Programs that are open at that time are skipped. Each run saves a report (Reports)."]
         if not app.is_admin:
-            notes.append("Items marked (admin) are not included - open PC Cleaner as administrator "
+            notes.append("Items marked (admin) are not included - run PC Cleaner as administrator "
                          "before saving the schedule to include them.")
-        ttk.Label(frame, text="\n".join(notes), wraplength=440, justify="left", foreground="#555").grid(
-            row=6, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        tb.Label(frame, text="\n".join(notes), wraplength=px(480), justify="left", bootstyle="secondary").grid(
+            row=7, column=0, columnspan=4, sticky="w", pady=(10, 0))
 
-        buttons = ttk.Frame(frame)
-        buttons.grid(row=7, column=0, columnspan=4, sticky="e", pady=(14, 0))
-        ttk.Button(buttons, text="Close", command=self.destroy).pack(side="right")
-        self.remove_btn = ttk.Button(buttons, text="Turn off", command=self._remove)
-        self.remove_btn.pack(side="right", padx=6)
-        ttk.Button(buttons, text="Save schedule", command=self._save).pack(side="right")
+        buttons = tb.Frame(frame)
+        buttons.grid(row=8, column=0, columnspan=4, sticky="e", pady=(18, 0))
+        tb.Button(buttons, text="Close", bootstyle="secondary-outline", command=self.destroy).pack(side="right")
+        tb.Button(buttons, text="Turn off", icon="calendar-x", bootstyle="danger-outline",
+                  command=self._remove).pack(side="right", padx=8)
+        tb.Button(buttons, text="Save schedule", icon="check-lg", bootstyle="primary",
+                  command=self._save).pack(side="right")
 
         self._sync()
-        threading.Thread(target=self._load_status, daemon=True).start()
+        self._refresh_status()
+        _match_title_bar(self)
+        self.grab_set()  # after the title bar fix, which briefly hides the window
 
     def _sync(self):
         self.day_box.configure(state="readonly" if self.frequency.get() == "weekly" else "disabled")
 
-    def _load_status(self):
-        saved = settings.load().get("schedule")
-        nxt = scheduler.next_run()
-        text = (f"Current: {scheduler.describe(saved)} - next run {nxt}" if saved and nxt
-                else "No schedule is set.")
-        self.after(0, lambda: self.winfo_exists() and self.status.configure(text=text))
+    def _refresh_status(self):
+        def work():
+            saved = settings.load().get("schedule")
+            nxt = scheduler.next_run()
+            text = (f"Current: {scheduler.describe(saved)} \u00b7 next run {nxt}" if saved and nxt
+                    else "No schedule is set.")
+            self.app.call_soon(self._set_status, text)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _set_status(self, text: str):
+        if self.winfo_exists():
+            self.status.configure(text=text)
 
     def _time(self) -> str | None:
         try:
@@ -498,7 +743,7 @@ class ScheduleDialog(tk.Toplevel):
         self.app._log(f"Schedule saved: {scheduler.describe(settings.load()['schedule'])}, "
                       f"{len(self.items)} item(s).")
         self.status.configure(text="Saved. Checking next run time...")
-        threading.Thread(target=self._load_status, daemon=True).start()
+        self._refresh_status()
 
     def _remove(self):
         try:
@@ -510,80 +755,86 @@ class ScheduleDialog(tk.Toplevel):
         self.status.configure(text="No schedule is set.")
 
 
-class LargeFilesWindow(tk.Toplevel):
+class LargeFilesWindow(tb.Toplevel):
     """Find the biggest files in a folder and send chosen ones to the Recycle Bin."""
 
-    COLUMNS = (("name", "Name", 260, "w"), ("size", "Size", 90, "e"),
-               ("modified", "Modified", 130, "w"), ("folder", "Folder", 380, "w"))
+    COLUMNS = (("name", "Name", 280, "w"), ("size", "Size", 90, "e"),
+               ("modified", "    Modified", 150, "w"), ("folder", "Folder", 400, "w"))
 
     def __init__(self, app: App):
-        super().__init__(app)
+        super().__init__(title="Large File Finder", iconphoto=None)
+        _geometry(self, (1000, 640), (760, 440))
         self.app = app
-        self.title("Large File Finder")
-        self.geometry("960x600")
-        self.minsize(720, 420)
         self.files: dict[str, largefiles.FileInfo] = {}
         self.cancel = threading.Event()
         self.events: queue.Queue = queue.Queue()
         self.sort_key, self.sort_desc = "size", True
 
-        frame = ttk.Frame(self, padding=10)
+        frame = tb.Frame(self, padding=px(18))
         frame.pack(fill="both", expand=True)
+        tb.Label(frame, text="Large File Finder", font=(FONT, 14, "bold")).pack(anchor="w")
+        tb.Label(frame, text="Find big files you no longer need. Files go to the Recycle Bin, so they can be "
+                             "restored.", bootstyle="secondary").pack(anchor="w", pady=(2, 12))
 
-        opts = ttk.Frame(frame)
+        opts = tb.Frame(frame)
         opts.pack(fill="x")
-        ttk.Label(opts, text="Folder:").grid(row=0, column=0, sticky="w")
+        tb.Label(opts, text="Folder", font=(FONT, 10, "bold")).pack(side="left", padx=(0, 8))
         self.folder = tk.StringVar(value=os.environ.get("USERPROFILE", "C:\\"))
-        ttk.Entry(opts, textvariable=self.folder, width=60).grid(row=0, column=1, sticky="we", padx=4)
-        ttk.Button(opts, text="Browse...", command=self._browse).grid(row=0, column=2)
-        opts.columnconfigure(1, weight=1)
+        tb.Button(opts, text="Browse", icon="folder2-open", bootstyle="secondary-outline",
+                  command=self._browse).pack(side="right")
+        tb.Entry(opts, textvariable=self.folder).pack(side="left", fill="x", expand=True, padx=(0, 8))
 
-        filters = ttk.Frame(frame)
-        filters.pack(fill="x", pady=(8, 0))
-        ttk.Label(filters, text="At least").pack(side="left")
-        self.min_mb = ttk.Spinbox(filters, values=(10, 50, 100, 250, 500, 1000, 2000, 5000), width=6)
+        filters = tb.Frame(frame)
+        filters.pack(fill="x", pady=(10, 0))
+        tb.Label(filters, text="At least").pack(side="left")
+        self.min_mb = tb.Spinbox(filters, values=(10, 50, 100, 250, 500, 1000, 2000, 5000), width=6)
         self.min_mb.set(100)
-        self.min_mb.pack(side="left", padx=4)
-        ttk.Label(filters, text="MB,  not changed for").pack(side="left")
-        self.min_days = ttk.Spinbox(filters, values=(0, 30, 90, 180, 365, 730), width=5)
+        self.min_mb.pack(side="left", padx=6)
+        tb.Label(filters, text="MB, not changed for").pack(side="left")
+        self.min_days = tb.Spinbox(filters, values=(0, 30, 90, 180, 365, 730), width=5)
         self.min_days.set(0)
-        self.min_days.pack(side="left", padx=4)
-        ttk.Label(filters, text="days (0 = any)").pack(side="left")
+        self.min_days.pack(side="left", padx=6)
+        tb.Label(filters, text="days (0 = any)").pack(side="left")
         self.skip_system = tk.BooleanVar(value=True)
-        ttk.Checkbutton(filters, text="Skip Windows and program folders",
-                        variable=self.skip_system).pack(side="left", padx=16)
-        self.find_btn = ttk.Button(filters, text="Find", command=self._find)
+        tb.Checkbutton(filters, text="Skip Windows and program folders", variable=self.skip_system,
+                       bootstyle="round-toggle").pack(side="left", padx=18)
+        self.find_btn = tb.Button(filters, text="Find", icon="search", bootstyle="primary", command=self._find)
         self.find_btn.pack(side="right")
-        self.stop_btn = ttk.Button(filters, text="Stop", command=self.cancel.set, state="disabled")
-        self.stop_btn.pack(side="right", padx=6)
+        self.stop_btn = tb.Button(filters, text="Stop", icon="stop-circle", bootstyle="secondary-outline",
+                                  command=self.cancel.set, state="disabled")
+        self.stop_btn.pack(side="right", padx=8)
 
-        table = ttk.Frame(frame)
-        table.pack(fill="both", expand=True, pady=8)
-        self.tree = ttk.Treeview(table, columns=[c[0] for c in self.COLUMNS], show="headings", selectmode="extended")
+        table = tb.Frame(frame)
+        table.pack(fill="both", expand=True, pady=12)
+        self.tree = _scrolled(table, lambda p: tb.Treeview(p, columns=[c[0] for c in self.COLUMNS],
+                                                           show="headings", selectmode="extended"))
         for col, title, width, anchor in self.COLUMNS:
             self.tree.heading(col, text=title, anchor=anchor, command=lambda c=col: self._sort(c))
-            self.tree.column(col, width=width, anchor=anchor, stretch=col in ("name", "folder"))
-        sb = ttk.Scrollbar(table, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        self.tree.pack(side="left", fill="both", expand=True)
-        self.tree.tag_configure("app", foreground="#8a6d00")
+            self.tree.column(col, width=px(width), anchor=anchor, stretch=col in ("name", "folder"))
         self.tree.bind("<Double-1>", lambda e: self._show())
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._update_selection())
 
-        bottom = ttk.Frame(frame)
+        bottom = tb.Frame(frame)
         bottom.pack(fill="x")
-        self.status = ttk.Label(bottom, text="Choose a folder and press Find. Nothing is deleted without asking.")
+        self.status = tb.Label(bottom, text="Choose a folder and press Find. Nothing is deleted without asking.",
+                               bootstyle="secondary")
         self.status.pack(side="left")
-        self.recycle_btn = ttk.Button(bottom, text="Send to Recycle Bin", command=self._recycle, state="disabled")
+        self.recycle_btn = tb.Button(bottom, text="Send to Recycle Bin", icon="trash3", bootstyle="danger",
+                                     command=self._recycle, state="disabled")
         self.recycle_btn.pack(side="right")
-        ttk.Button(bottom, text="Show in Explorer", command=self._show).pack(side="right", padx=6)
+        tb.Button(bottom, text="Show in Explorer", icon="folder2-open", bootstyle="secondary-outline",
+                  command=self._show).pack(side="right", padx=8)
 
+        self._apply_colors()
+        app.theme_listeners.append(self._apply_colors)
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.after(100, self._drain)
 
+    def _apply_colors(self):
+        self.tree.tag_configure("app", foreground=_warning_text())
+        _match_title_bar(self)
+
     def _browse(self):
-        from tkinter import filedialog
         chosen = filedialog.askdirectory(parent=self, initialdir=self.folder.get(), mustexist=True)
         if chosen:
             self.folder.set(os.path.normpath(chosen))
@@ -640,7 +891,7 @@ class LargeFilesWindow(tk.Toplevel):
         key = {"name": lambda f: os.path.basename(f.path).lower(), "size": lambda f: f.size,
                "modified": lambda f: f.modified, "folder": lambda f: os.path.dirname(f.path).lower()}[self.sort_key]
         for f in sorted(self.files.values(), key=key, reverse=self.sort_desc):
-            modified = time.strftime("%Y-%m-%d %H:%M", time.localtime(f.modified))
+            modified = "    " + time.strftime("%Y-%m-%d %H:%M", time.localtime(f.modified))
             app_file = largefiles.is_app_file(f.path)
             name = os.path.basename(f.path) + ("   (app file)" if app_file else "")
             self.tree.insert("", "end", iid=f.path, tags=("app",) if app_file else (),
@@ -698,6 +949,8 @@ class LargeFilesWindow(tk.Toplevel):
 
     def _close(self):
         self.cancel.set()
+        if self._apply_colors in self.app.theme_listeners:
+            self.app.theme_listeners.remove(self._apply_colors)
         self.destroy()
 
 

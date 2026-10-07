@@ -6,6 +6,7 @@ import ctypes
 import os
 import subprocess
 import sys
+import time
 from ctypes import wintypes
 
 _shell32 = ctypes.windll.shell32
@@ -61,6 +62,90 @@ def known_folder(guid: str) -> str | None:
         return path.value
     finally:
         ctypes.windll.ole32.CoTaskMemFree(path)
+
+
+def find_pids(names) -> dict[int, str]:
+    """{pid: exe name} for running processes whose exe name is in `names` (case-insensitive)."""
+    wanted = {n.lower() for n in names}
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True,
+            errors="replace", creationflags=subprocess.CREATE_NO_WINDOW, timeout=15,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    pids = {}
+    for row in csv.reader(out.splitlines()):
+        if len(row) > 1 and row[0].lower() in wanted and row[1].isdigit() and int(row[1]) != os.getpid():
+            pids[int(row[1])] = row[0].lower()
+    return pids
+
+
+_WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+
+def close_windows(pids) -> int:
+    """Politely ask processes to quit: send WM_CLOSE to their visible top-level windows,
+    as if the user clicked X (apps can save state or ask about unsaved work)."""
+    pids = set(pids)
+    sent = 0
+
+    def callback(hwnd, _):
+        nonlocal sent
+        pid = wintypes.DWORD()
+        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value in pids and _user32.IsWindowVisible(hwnd):
+            _user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+            sent += 1
+        return True
+
+    _user32.EnumWindows(_WNDENUMPROC(callback), 0)
+    return sent
+
+
+def wait_for_exit(pids, timeout: float) -> set[int]:
+    """Wait until the processes end. Returns the pids still running after `timeout` seconds."""
+    kernel32 = ctypes.windll.kernel32
+    SYNCHRONIZE, WAIT_TIMEOUT = 0x00100000, 0x102
+    deadline = time.monotonic() + timeout
+    remaining = set()
+    for pid in pids:
+        handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+        if not handle:
+            continue  # already gone (or not ours to watch)
+        try:
+            wait_ms = max(0, int((deadline - time.monotonic()) * 1000))
+            if kernel32.WaitForSingleObject(handle, wait_ms) == WAIT_TIMEOUT:
+                remaining.add(pid)
+        finally:
+            kernel32.CloseHandle(handle)
+    return remaining
+
+
+def kill_pids(pids) -> None:
+    """Force-end processes (and their child processes). Unsaved work in them is lost."""
+    for pid in pids:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW, timeout=30)
+
+
+def close_processes(names, timeout: float = 15.0) -> set[str]:
+    """Close all running programs with these exe names gracefully.
+    Returns the exe names that are still running afterwards."""
+    pids = find_pids(names)
+    if pids:
+        close_windows(pids)
+        wait_for_exit(pids, timeout)
+    return set(find_pids(names).values())
+
+
+def kill_processes(names) -> set[str]:
+    """Force-close all running programs with these exe names. Returns names still running."""
+    pids = find_pids(names)
+    if pids:
+        kill_pids(pids)
+        wait_for_exit(pids, 10)
+    return set(find_pids(names).values())
 
 
 def run_powershell(script: str, timeout: int = 300) -> subprocess.CompletedProcess:
@@ -121,6 +206,15 @@ def send_to_recycle_bin(paths: list[str], hwnd=None) -> list[str]:
     if paths:
         _shell_delete(paths, FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING | FOF_NOERRORUI, hwnd)
     return [p for p in paths if os.path.lexists(p)]
+
+
+def set_dark_title_bar(hwnd: int, dark: bool) -> None:
+    """Ask Windows 10 (20H1+) / 11 to draw a window's title bar dark or light."""
+    value = ctypes.c_int(1 if dark else 0)
+    for attribute in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (19 on older Windows 10 builds)
+        if ctypes.windll.dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), attribute,
+                                                      ctypes.byref(value), ctypes.sizeof(value)) == 0:
+            break
 
 
 def show_in_explorer(path: str) -> None:
