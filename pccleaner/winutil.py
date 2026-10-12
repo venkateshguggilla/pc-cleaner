@@ -64,6 +64,49 @@ def known_folder(guid: str) -> str | None:
         ctypes.windll.ole32.CoTaskMemFree(path)
 
 
+# ---- shortcuts (.lnk) via the shell's IShellLink COM object, no scripts needed ----------
+
+def _com_method(ptr, index: int, *argtypes):
+    """Callable for method number `index` of a COM interface pointer's vtable."""
+    vtable = ctypes.cast(ptr, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+    proto = ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p, *argtypes)
+    return lambda *args: proto(vtable[index])(ptr, *args)
+
+
+def _guid(text: str) -> "_GUID":
+    import uuid
+    return _GUID.from_buffer_copy(uuid.UUID(text).bytes_le)
+
+
+def create_shortcut(lnk_path: str, target: str, arguments: str = "", workdir: str = "",
+                    icon: str = "", description: str = "") -> None:
+    ole32 = ctypes.windll.ole32
+    ole32.CoInitialize(None)  # fine if COM is already initialised on this thread
+    link = ctypes.c_void_p()
+    hr = ole32.CoCreateInstance(ctypes.byref(_guid("00021401-0000-0000-C000-000000000046")), None,
+                                1, ctypes.byref(_guid("000214F9-0000-0000-C000-000000000046")),  # IShellLinkW
+                                ctypes.byref(link))
+    if hr != 0:
+        raise OSError(f"Could not create shell link object (HRESULT {hr & 0xFFFFFFFF:#010x})")
+    try:
+        _com_method(link, 20, wintypes.LPCWSTR)(target)        # SetPath
+        _com_method(link, 11, wintypes.LPCWSTR)(arguments)     # SetArguments
+        _com_method(link, 9, wintypes.LPCWSTR)(workdir)        # SetWorkingDirectory
+        _com_method(link, 7, wintypes.LPCWSTR)(description)    # SetDescription
+        if icon:
+            _com_method(link, 17, wintypes.LPCWSTR, ctypes.c_int)(icon, 0)  # SetIconLocation
+        persist = ctypes.c_void_p()
+        _com_method(link, 0, ctypes.c_void_p, ctypes.c_void_p)(  # QueryInterface(IPersistFile)
+            ctypes.byref(_guid("0000010B-0000-0000-C000-000000000046")), ctypes.byref(persist))
+        try:
+            os.makedirs(os.path.dirname(lnk_path), exist_ok=True)
+            _com_method(persist, 6, wintypes.LPCWSTR, wintypes.BOOL)(lnk_path, True)  # Save
+        finally:
+            _com_method(persist, 2)()  # Release
+    finally:
+        _com_method(link, 2)()  # Release
+
+
 def find_pids(names) -> dict[int, str]:
     """{pid: exe name} for running processes whose exe name is in `names` (case-insensitive)."""
     wanted = {n.lower() for n in names}

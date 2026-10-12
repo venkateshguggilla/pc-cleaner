@@ -45,6 +45,26 @@ class ProcessTests(unittest.TestCase):
         self.assertNotIn(os.getpid(), winutil.find_pids([me]))
 
 
+class ShortcutTests(unittest.TestCase):
+    def test_create_shortcut_round_trip(self):
+        import tempfile
+        folder = tempfile.mkdtemp(prefix="pccleaner_lnk_")
+        self.addCleanup(lambda: __import__("shutil").rmtree(folder, ignore_errors=True))
+        lnk = os.path.join(folder, "sub", "PC Cleaner.lnk")
+        project = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        winutil.create_shortcut(lnk, PYTHONW, "-m pccleaner", project,
+                                os.path.join(project, "assets", "pccleaner.ico"), "PC Cleaner")
+        out = winutil.run_powershell(
+            f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}'); "
+            "$s.TargetPath; $s.Arguments; $s.WorkingDirectory; $s.IconLocation; $s.Description").stdout
+        target, args, workdir, icon, desc = out.strip().splitlines()
+        self.assertEqual(os.path.normcase(target), os.path.normcase(PYTHONW))
+        self.assertEqual(args, "-m pccleaner")
+        self.assertEqual(os.path.normcase(workdir), os.path.normcase(project))
+        self.assertTrue(icon.lower().endswith("pccleaner.ico,0"))
+        self.assertEqual(desc, "PC Cleaner")
+
+
 class CleanFlowTests(unittest.TestCase):
     """Run Cleaner with a program open: close it (or not), then clean."""
 

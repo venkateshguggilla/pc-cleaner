@@ -21,6 +21,42 @@ def _pick(targets, ids):
     return [by_id[i] for i in ids]
 
 
+def shortcut_paths(desktop: bool) -> list[str]:
+    start_menu = os.path.join(os.environ["APPDATA"], r"Microsoft\Windows\Start Menu\Programs")
+    paths = [os.path.join(start_menu, "PC Cleaner.lnk")]
+    if desktop:
+        folder = winutil.known_folder("B4BFCC3A-DB2C-424C-B029-7FE99A87C641") or \
+            os.path.join(os.environ["USERPROFILE"], "Desktop")
+        paths.append(os.path.join(folder, "PC Cleaner.lnk"))
+    return paths
+
+
+def install_shortcuts(desktop: bool = False, remove: bool = False) -> int:
+    """Shortcuts that start the app through Python's own signed pythonw.exe, so it runs on
+    PCs where Smart App Control blocks the unsigned PCCleaner.exe."""
+    if getattr(sys, "frozen", False):
+        print("This is the packaged exe - use the installer for shortcuts.")
+        return 1
+    paths = shortcut_paths(desktop=desktop or remove)
+    if remove:
+        for path in paths:
+            if os.path.exists(path):
+                os.remove(path)
+                print(f"Removed {path}")
+        return 0
+    project = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    if not os.path.exists(pythonw):
+        print(f"pythonw.exe not found next to {sys.executable}")
+        return 1
+    for path in paths:
+        winutil.create_shortcut(path, pythonw, "-m pccleaner", project,
+                                os.path.join(project, "assets", "pccleaner.ico"), "PC Cleaner")
+        print(f"Created {path}")
+    print("Open PC Cleaner from the Start menu.")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="pccleaner", description="Clean temp files, history and caches.")
     sub = parser.add_subparsers(dest="cmd")
@@ -37,6 +73,12 @@ def main(argv=None) -> int:
     large.add_argument("--min-mb", type=float, default=100, help="minimum size in MB (default 100)")
     large.add_argument("--days", type=float, default=0, help="only files not changed for this many days")
     large.add_argument("--top", type=int, default=30, help="how many to show (default 30)")
+    shortcut = sub.add_parser(
+        "install-shortcut",
+        help="add a Start menu shortcut that runs PC Cleaner with Python "
+             "(for PCs where Smart App Control blocks the exe)")
+    shortcut.add_argument("--desktop", action="store_true", help="also add a desktop shortcut")
+    shortcut.add_argument("--remove", action="store_true", help="remove the shortcuts instead")
     sub.add_parser("schedule", help="show the cleaning schedule")
     sub.add_parser("scheduled-run", help="clean the scheduled items without prompts (used by the task)")
     args = parser.parse_args(argv)
@@ -45,6 +87,9 @@ def main(argv=None) -> int:
         from .gui import run
         run()
         return 0
+
+    if args.cmd == "install-shortcut":
+        return install_shortcuts(desktop=args.desktop, remove=args.remove)
 
     if args.cmd == "large":
         from . import largefiles

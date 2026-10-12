@@ -55,6 +55,28 @@ Off by default because they're disruptive: cookies (signs you out), saved sessio
 jump lists (also removes pinned jump-list items), ShellBags (resets folder views), UserAssist
 (resets Start "Most used"), thumbnail cache, Recycle Bin, Windows Update cache.
 
+## PCs with Smart App Control (Windows 11)
+
+Smart App Control blocks unsigned programs, including `PCCleaner.exe` and its installer, and also
+`.bat`/`.ps1` files downloaded from the internet. Until the app is code-signed, run it with Python
+instead — Python's own programs and DLLs are signed, and this app is pure Python:
+
+1. Install Python 3.12: `winget install -e --id Python.Python.3.12` (or from python.org; keep the
+   default "tcl/tk" option). Then open a **new** terminal.
+2. On GitHub open **pc-cleaner → Code → Download ZIP** and extract it somewhere permanent,
+   e.g. `C:\Tools\pc-cleaner-main` (the shortcut will point there).
+3. In that folder (right-click → **Open in Terminal**) type:
+   ```
+   py -m pip install -r requirements.txt
+   py -m pccleaner install-shortcut --desktop
+   ```
+4. Start PC Cleaner from the Start menu (or desktop).
+
+Don't use `run.bat` or the build scripts on that PC — Smart App Control blocks downloaded batch files.
+Everything else works as usual, including *Run as administrator* and scheduled cleaning.
+To update: download the new ZIP, replace the folder, and run step 3 again.
+`py -m pccleaner install-shortcut --remove` removes the shortcuts.
+
 ## Large file finder
 
 **Large files...** lists the biggest files in a folder (default: your user folder) above a size
