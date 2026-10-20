@@ -1,6 +1,7 @@
 """Linux port tests: the catalog against a throwaway home folder, the platform layer, safety rules."""
 import os
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -212,7 +213,8 @@ class PlatformTests(FakeHome):
         time.sleep(0.3)
         self.assertIn("pcc-test-sleeper", plat.running_processes())
         self.assertEqual(plat.close_processes(["pcc-test-sleeper"], timeout=5), set())
-        self.assertIsNotNone(proc.poll())
+        # It got SIGTERM (a polite close); wait for it to finish exiting rather than racing it
+        self.assertEqual(proc.wait(timeout=5), -signal.SIGTERM)
 
     def test_never_runs_as_admin_itself(self):
         self.assertFalse(plat.relaunch_as_admin())
