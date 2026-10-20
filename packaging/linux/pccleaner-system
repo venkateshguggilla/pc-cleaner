@@ -1,0 +1,28 @@
+#!/bin/bash
+# PC Cleaner's system maintenance items (installed as /usr/libexec/pccleaner/pccleaner-system).
+# Run through pkexec, polkit action com.github.venkateshguggilla.pccleaner.system: the admin
+# password once, remembered for a few minutes. Only these fixed actions exist; nothing from the
+# caller is passed on.
+set -uo pipefail
+
+if [[ "${EUID}" -ne 0 ]]; then
+    echo "must run as root (use pkexec)" >&2
+    exit 2
+fi
+
+case "${1:-}" in
+journal)
+    # Keep the last 7 days of system logs
+    journalctl --vacuum-time=7d
+    ;;
+coredumps)
+    find /var/lib/systemd/coredump -mindepth 1 -maxdepth 1 -type f -delete
+    ;;
+flatpak-unused)
+    flatpak uninstall --system --unused --noninteractive -y
+    ;;
+*)
+    echo "usage: $0 journal|coredumps|flatpak-unused" >&2
+    exit 2
+    ;;
+esac

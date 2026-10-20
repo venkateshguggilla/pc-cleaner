@@ -80,6 +80,17 @@ class ScheduledRunTests(unittest.TestCase):
         self.assertIn("gone: no longer available", text)
         self.assertEqual(settings.load()["checked"], {"x": True})  # other settings untouched
 
+    def test_items_that_ask_for_approval_are_skipped_unattended(self):
+        settings.update(schedule={"items": ["a", "logs"]})
+        catalog = [self.target("a"), self.target("logs", approval=True)]
+        with mock.patch("pccleaner.cleaners.build_catalog", return_value=catalog), \
+                mock.patch.object(scheduler.plat, "is_admin", return_value=False), \
+                mock.patch.object(scheduler.plat, "running_processes", return_value=set()):
+            path = scheduler.run_scheduled()
+        self.assertEqual(self.cleaned, ["a"])
+        with open(path, encoding="utf-8") as f:
+            self.assertIn("asks for administrator approval", f.read())
+
     def test_no_schedule_cleans_nothing(self):
         with mock.patch("pccleaner.cleaners.build_catalog", return_value=[self.target("a")]):
             scheduler.run_scheduled()

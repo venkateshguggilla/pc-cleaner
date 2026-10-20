@@ -4,7 +4,6 @@ from __future__ import annotations
 import csv
 import os
 
-from .. import regutil
 from ..core import Custom, Files, RegKeys, Target
 from ..fsutil import children, existing
 from ..stats import Stats
@@ -67,6 +66,8 @@ def vlc_clean(path: str = VLC_INI) -> Stats:
 # ---- player table --------------------------------------------------------------
 
 def targets():
+    from .. import regutil  # Windows registry; the VLC helpers above also work on Linux
+
     wmp = r"Software\Microsoft\MediaPlayer\Player"
     if regutil.key_exists(wmp + r"\RecentFileList") or regutil.key_exists(wmp + r"\RecentURLList"):
         yield Target("media.wmp", GROUP, "Windows Media Player: recent files",

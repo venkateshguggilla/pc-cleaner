@@ -11,7 +11,7 @@ from . import platform as plat
 
 APP_DIR = plat.app_dir()
 SETTINGS_FILE = os.path.join(APP_DIR, "settings.json")
-LOG_DIR = os.path.join(APP_DIR, "logs")
+LOG_DIR = plat.log_dir()
 
 
 def load() -> dict:

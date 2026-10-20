@@ -13,7 +13,7 @@ from .. import winutil
 from . import DAYS
 
 __all__ = [
-    "NAME", "app_dir", "protected_paths", "is_admin", "relaunch_as_admin", "running_processes",
+    "NAME", "app_dir", "log_dir", "protected_paths", "is_admin", "relaunch_as_admin", "running_processes",
     "close_processes", "kill_processes", "send_to_trash", "show_in_file_manager", "open_folder",
     "set_dark_title_bar", "install_shortcuts", "schedule_install", "schedule_remove",
     "schedule_installed", "schedule_next_run",
@@ -25,6 +25,10 @@ TASK_NAME = "PCCleaner"
 
 def app_dir() -> str:
     return os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "PCCleaner")
+
+
+def log_dir() -> str:
+    return os.path.join(app_dir(), "logs")
 
 
 def protected_paths() -> list[str]:

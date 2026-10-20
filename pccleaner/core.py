@@ -70,9 +70,10 @@ class Target:
     description: str
     parts: list = field(default_factory=list)
     default: bool = True          # ticked on first run
-    admin: bool = False           # needs administrator rights
+    admin: bool = False           # needs administrator rights (Windows: run the app elevated)
     processes: tuple[str, ...] = ()  # programs that must be closed to clean
     warning: str = ""             # shown when the user ticks the item
+    approval: bool = False        # asks for admin approval when cleaned (Linux: pkexec helper)
 
     def __post_init__(self):
         self.processes = tuple(p.lower() for p in self.processes)

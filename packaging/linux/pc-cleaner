@@ -1,0 +1,4 @@
+#!/bin/sh
+# Starts PC Cleaner installed in /usr/lib/pc-cleaner (with its bundled ttkbootstrap).
+export PYTHONPATH="/usr/lib/pc-cleaner/vendor:/usr/lib/pc-cleaner${PYTHONPATH:+:${PYTHONPATH}}"
+exec /usr/bin/python3 -m pccleaner "$@"

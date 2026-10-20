@@ -93,7 +93,7 @@ def main(argv=None) -> int:
     targets = build_catalog()
     if args.cmd == "list":
         for t in targets:
-            flags = ("default" if t.default else "") + (" admin" if t.admin else "")
+            flags = ("default" if t.default else "") + (" admin" if t.admin else "") + (" asks-admin" if t.approval else "")
             print(f"{t.id:28} {t.group} / {t.name}  [{flags.strip()}]")
         return 0
 

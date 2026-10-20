@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=PC Cleaner
+GenericName=System Cleaner
+Comment=Remove junk files and privacy traces
+Exec=pc-cleaner
+Icon=pc-cleaner
+Terminal=false
+Categories=Utility;System;
+Keywords=clean;junk;cache;privacy;history;trash;disk;space;

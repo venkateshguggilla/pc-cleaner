@@ -1,4 +1,10 @@
 """winapp2.ini engine tests - rules only point at a temp folder and a throwaway HKCU key."""
+import sys
+import unittest
+
+if sys.platform != "win32":
+    raise unittest.SkipTest("Windows: registry, Windows processes or the Recycle Bin")
+
 import os
 import shutil
 import tempfile

@@ -1,4 +1,10 @@
 """Tests run only against throwaway folders, databases and registry keys."""
+import sys
+import unittest
+
+if sys.platform != "win32":
+    raise unittest.SkipTest("Windows: registry, Windows processes or the Recycle Bin")
+
 import json
 import os
 import shutil

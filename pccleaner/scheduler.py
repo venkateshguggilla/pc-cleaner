@@ -61,6 +61,9 @@ def run_scheduled() -> str:
         if t.admin and not admin:
             extra.append(f"Skipped {label}: needs administrator rights")
             continue
+        if t.approval:
+            extra.append(f"Skipped {label}: asks for administrator approval, so it can't run unattended")
+            continue
         open_apps = [p for p in t.processes if p in running]
         if open_apps:
             extra.append(f"Skipped {label}: {', '.join(open_apps)} was running")

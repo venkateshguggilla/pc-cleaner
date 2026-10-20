@@ -6,7 +6,8 @@ exception: they are per-OS by nature (cleaners/__init__.py picks the right ones)
 
     NAME                                  "windows" or "linux"
     DAYS                                  weekday names for weekly schedules
-    app_dir()                             folder for settings.json and the logs folder
+    app_dir()                             folder for settings.json
+    log_dir()                             folder for cleaning reports
     protected_paths()                     folders that must never be deleted (fsutil)
     is_admin() / relaunch_as_admin()
     running_processes()                   lower-case names of running programs

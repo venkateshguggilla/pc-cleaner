@@ -121,10 +121,30 @@ folders are refused, and registry rules are limited to non-core keys under `HKCU
   by force. Or leave them open and skip their items. Scheduled runs never close programs; they skip.
 - Firefox history is removed from `places.sqlite` with SQL so **bookmarks are kept**.
 
+## Linux (RudramOS)
+
+The same app runs on Linux; [RudramOS](https://github.com/venkateshguggilla/RudramOS) ships it as **PC Cleaner** in the app menu (`pc-cleaner` in a terminal). From source: `python3 -m pccleaner` (needs `python3-tkinter` and `pip install ttkbootstrap`).
+
+| Group | Items |
+|---|---|
+| System | application caches (`~/.cache`, files changed in the last hour kept), Flatpak app caches, graphics shader caches (Mesa, NVIDIA), thumbnail cache*, Trash* |
+| Desktop history | recently used files (Files and Open/Save dialogs), terminal command history* |
+| Browsers | Firefox, Chrome, Chromium, Brave, Edge, Vivaldi, each as a normal install **and** as a Flatpak: history (Firefox bookmarks kept), cache, cookies*, saved session* |
+| Media players | VLC recent list (normal and Flatpak), mpv resume positions |
+| Apps / developer tools | VS Code and VSCodium caches; npm, Yarn, pip, Cargo, Go, NuGet caches |
+| System maintenance (asks admin) | system logs older than 7 days, crash dumps, unused Flatpak runtimes |
+
+\* unticked by default. **System maintenance** items appear where the `pccleaner-system` helper is installed (RudramOS). Each asks for your administrator password when it's cleaned; the app itself never runs as root, so there's no "Run as administrator" button on Linux. Scheduled runs skip those items.
+
+Differences from Windows: settings in `~/.config/pccleaner`, reports in `~/.local/state/pccleaner/logs`; the schedule is a systemd user timer (`systemctl --user status pccleaner.timer`) that also catches up after the PC was off; Large files moves to the Trash; programs are closed with SIGTERM (like closing the window) and only with your OK by force. winapp2.ini rules are Windows-only.
+
+Packaging for Linux (launcher, app-menu entry, helper and its polkit rule) is in `packaging/linux/`.
+
 ## Adding a new cleaner
 
-Add a `Target` in `pccleaner/cleaners/*.py`, built from parts:
-`Files(lambda: [paths...])`, `RegKeys(r"Software\...")` or `Custom(scan_fn, clean_fn)`.
+Add a `Target` in `pccleaner/cleaners/*.py` (Windows) or `pccleaner/cleaners/linux.py` (Linux), built from parts:
+`Files(lambda: [paths...])`, `RegKeys(r"Software\...")` or `Custom(scan_fn, clean_fn)`. Anything that differs
+between Windows and Linux (processes, Trash, scheduling, folders) goes through `pccleaner/platform`.
 
 ## Tests
 
@@ -132,3 +152,4 @@ Add a `Target` in `pccleaner/cleaners/*.py`, built from parts:
 python -m unittest discover -s tests -t . -v
 ```
 Tests only touch temporary folders, a throwaway SQLite file and a throwaway `HKCU\Software\PCCleanerTest_*` key.
+On Linux the Windows-only tests skip themselves and `tests/test_linux.py` runs the Linux catalog against a throwaway home folder.

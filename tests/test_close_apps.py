@@ -2,6 +2,12 @@
 
 Process tests only touch processes they start themselves (by PID), never real programs by name.
 """
+import sys
+import unittest
+
+if sys.platform != "win32":
+    raise unittest.SkipTest("Windows: registry, Windows processes or the Recycle Bin")
+
 import os
 import subprocess
 import sys

@@ -20,9 +20,11 @@ CR_HISTORY = ["History", "History-journal", "Visited Links", "Top Sites", "Top S
               "Shortcuts", "Shortcuts-journal", "Network Action Predictor",
               "Network Action Predictor-journal", "Favicons", "Favicons-journal"]
 CR_CACHE_DIRS = ["Cache", "Code Cache", "GPUCache", "DawnCache", "DawnGraphiteCache",
-                 "DawnWebGPUCache", r"Service Worker\CacheStorage", r"Service Worker\ScriptCache"]
+                 "DawnWebGPUCache", os.path.join("Service Worker", "CacheStorage"),
+                 os.path.join("Service Worker", "ScriptCache")]
 CR_SHARED_CACHE_DIRS = ["ShaderCache", "GrShaderCache", "GraphiteDawnCache"]
-CR_COOKIES = [r"Network\Cookies", r"Network\Cookies-journal", "Cookies", "Cookies-journal"]
+CR_COOKIES = [os.path.join("Network", "Cookies"), os.path.join("Network", "Cookies-journal"),
+              "Cookies", "Cookies-journal"]
 CR_SESSIONS = ["Sessions", "Current Session", "Current Tabs", "Last Session", "Last Tabs"]
 
 
@@ -33,6 +35,8 @@ class Chromium:
     data_dir: str
     process: str
     local_dir: str | None = None  # Opera: data_dir is the profile, caches live here
+    cache_root: str | None = None  # Linux: caches in ~/.cache/<browser>/<profile>
+    other_processes: tuple[str, ...] = ()
 
     def profiles(self) -> list[tuple[str, str]]:
         """(profile dir, cache dir) pairs."""
@@ -42,7 +46,8 @@ class Chromium:
         for path in children(self.data_dir):
             name = os.path.basename(path)
             if os.path.isdir(path) and (name in ("Default", "Guest Profile") or name.startswith("Profile ")):
-                result.append((path, path))
+                cache = os.path.join(self.cache_root, name) if self.cache_root else path
+                result.append((path, cache))
         return result
 
     @property
@@ -65,7 +70,7 @@ CHROMIUM = [
 
 
 def _chromium_targets(b: Chromium):
-    group, procs = b.name, (b.process,)
+    group, procs = b.name, (b.process, *b.other_processes)
     close = f"{b.name} must be closed."
 
     def history():
@@ -95,9 +100,12 @@ def _chromium_targets(b: Chromium):
 
 # ---- Firefox ----------------------------------------------------------------
 
-def firefox_profiles() -> list[tuple[str, str]]:
-    """(profile dir, cache dir) pairs from profiles.ini."""
-    root = os.path.join(ROAMING, r"Mozilla\Firefox")
+def firefox_profiles(root: str | None = None, cache_root: str | None = None) -> list[tuple[str, str]]:
+    """(profile dir, cache dir) pairs from profiles.ini (Windows locations unless given)."""
+    if root is None:
+        root = os.path.join(ROAMING, r"Mozilla\Firefox")
+    if cache_root is None:
+        cache_root = os.path.join(LOCAL, r"Mozilla\Firefox")
     ini = configparser.ConfigParser(interpolation=None)
     try:
         ini.read(os.path.join(root, "profiles.ini"), encoding="utf-8")
@@ -110,7 +118,7 @@ def firefox_profiles() -> list[tuple[str, str]]:
             continue
         path = sec["path"].replace("/", os.sep)
         if sec.get("isrelative", "1") == "1":
-            prof, cache = os.path.join(root, path), os.path.join(LOCAL, r"Mozilla\Firefox", path)
+            prof, cache = os.path.join(root, path), os.path.join(cache_root, path)
         else:
             prof = cache = path
         if os.path.isdir(prof):
@@ -188,9 +196,9 @@ def _places_part(profiles) -> Custom:
     return Custom(lambda: run(count_places_history), lambda: run(clear_places_history))
 
 
-def _firefox_targets():
-    profiles = firefox_profiles
-    group, procs = "Mozilla Firefox", ("firefox.exe",)
+def firefox_targets(profiles=firefox_profiles, procs=("firefox.exe",)):
+    """Firefox items for the profiles `profiles()` returns (Windows by default; Linux passes its own)."""
+    group = "Mozilla Firefox"
 
     def files_in_profiles(names):
         return lambda: [p for prof, _ in profiles() for p in existing(prof, names)]
@@ -222,4 +230,4 @@ def targets():
         if browser.profiles():
             yield from _chromium_targets(browser)
     if firefox_profiles():
-        yield from _firefox_targets()
+        yield from firefox_targets()

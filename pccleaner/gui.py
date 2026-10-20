@@ -13,7 +13,7 @@ import ttkbootstrap as tb
 
 from . import largefiles, report, scheduler, settings
 from . import platform as plat
-from .cleaners import build_catalog, winapp2
+from .cleaners import build_catalog
 from .core import Target
 from .stats import Stats, human_size
 
@@ -84,6 +84,10 @@ APP_NAMES = {
     "code.exe": "Visual Studio Code", "code - insiders.exe": "VS Code Insiders", "vscodium.exe": "VSCodium",
     "cursor.exe": "Cursor", "photos.exe": "Photos", "microsoft.photos.exe": "Photos",
     "mspaint.exe": "Paint", "wordpad.exe": "WordPad",
+    # Linux process names
+    "firefox": "Mozilla Firefox", "chrome": "Google Chrome", "chromium": "Chromium", "brave": "Brave",
+    "msedge": "Microsoft Edge", "vivaldi-bin": "Vivaldi", "vlc": "VLC", "mpv": "mpv", "celluloid": "Celluloid",
+    "code": "Visual Studio Code", "codium": "VSCodium",
 }
 
 
@@ -173,7 +177,9 @@ class App(tb.Window):
                                    command=self._toggle_theme)
         self.theme_btn.pack(side="right")
         tb.ToolTip(self.theme_btn, text="Switch light / dark theme")
-        if self.is_admin:
+        if plat.NAME != "windows":
+            pass  # Linux: admin items ask for approval when they're cleaned; the app never runs as root
+        elif self.is_admin:
             tb.Label(header, text="  Administrator  ", bootstyle="inverse-success",
                      font=(FONT, 9, "bold")).pack(side="right", padx=8)
         else:
@@ -187,6 +193,8 @@ class App(tb.Window):
                  ("Reports", "journal-text", self._open_reports, "Open the folder with cleaning reports"),
                  ("Schedule", "calendar-check", lambda: ScheduleDialog(self), "Clean automatically every day or week"),
                  ("Large files", "hdd", lambda: LargeFilesWindow(self), "Find the biggest files on your PC"))
+        if plat.NAME != "windows":
+            tools = tools[1:]  # winapp2.ini rules are Windows rules
         for text, icon, command, tip in tools:
             btn = tb.Button(header, text=text, icon=icon, bootstyle="secondary-ghost", command=command)
             btn.pack(side="right", padx=2)
@@ -323,7 +331,7 @@ class App(tb.Window):
             for t in kids:
                 if self._usable(t):
                     box = ON if self.checked.get(t.id) else OFF
-                    self.tree.item(t.id, text=f"{box}  {t.name}", tags=())
+                    self.tree.item(t.id, text=f"{box}  {t.name}" + ("  (asks admin)" if t.approval else ""), tags=())
                 else:
                     self.tree.item(t.id, text=f"{OFF}  {t.name}  (admin)", tags=("disabled",))
 
@@ -354,7 +362,8 @@ class App(tb.Window):
         iid = self.tree.focus()
         if iid in self.by_id:
             t = self.by_id[iid]
-            note = "\nRequires administrator rights." if t.admin else ""
+            note = ("\nRequires administrator rights." if t.admin
+                    else "\nAsks for administrator approval when it's cleaned." if t.approval else "")
             self.desc.configure(text=t.description + note)
 
     def _select(self, which: str):
@@ -368,6 +377,8 @@ class App(tb.Window):
         self._save_selection()
 
     def _update_winapp2(self):
+        from .cleaners import winapp2  # Windows only (the button only exists there)
+
         if self.working:
             return
         if not messagebox.askyesno(
@@ -684,7 +695,9 @@ class ScheduleDialog(tb.Toplevel):
             box.insert("end", f"  {t.group}: {t.name}")
 
         notes = ["Programs that are open at that time are skipped. Each run saves a report (Reports)."]
-        if not app.is_admin:
+        if any(t.approval for t in self.items):
+            notes.append("Items marked (asks admin) are skipped: they need your approval, so clean them from here.")
+        if not app.is_admin and plat.NAME == "windows":
             notes.append("Items marked (admin) are not included - run PC Cleaner as administrator "
                          "before saving the schedule to include them.")
         tb.Label(frame, text="\n".join(notes), wraplength=px(480), justify="left", bootstyle="secondary").grid(

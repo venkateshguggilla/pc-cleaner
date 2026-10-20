@@ -1,4 +1,10 @@
 """Large file finder tests (temp folders only)."""
+import sys
+import unittest
+
+if sys.platform != "win32":
+    raise unittest.SkipTest("Windows: registry, Windows processes or the Recycle Bin")
+
 import os
 import shutil
 import subprocess
