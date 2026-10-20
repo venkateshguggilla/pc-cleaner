@@ -4,3 +4,5 @@
 *.iss text eol=crlf
 *.ico binary
 *.png binary
+# Linux packaging runs on Linux: keep LF even when edited on Windows
+packaging/linux/* text eol=lf
