@@ -7,7 +7,7 @@
   <vendor_url>https://github.com/venkateshguggilla/pc-cleaner</vendor_url>
   <action id="com.github.venkateshguggilla.pccleaner.system">
     <description>Clean system logs, crash dumps and unused app runtimes</description>
-    <message>Authentication is required to clean system files</message>
+    <message>PC Cleaner wants to clean system files: old logs, crash dumps or unused app runtimes ($(cmdline_short))</message>
     <icon_name>edit-clear</icon_name>
     <defaults>
       <allow_any>no</allow_any>
