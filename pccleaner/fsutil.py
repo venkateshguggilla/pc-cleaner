@@ -12,6 +12,7 @@ import os
 import stat
 from functools import lru_cache
 
+from . import platform as plat
 from .stats import Stats
 
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
@@ -24,20 +25,7 @@ def _norm(path: str) -> str:
 
 @lru_cache(maxsize=1)
 def _protected() -> frozenset[str]:
-    env = os.environ
-    drive = env.get("SystemDrive", "C:") + "\\"
-    windir = env.get("SystemRoot", drive + "Windows")
-    profile = env.get("USERPROFILE", "")
-    paths = [
-        drive, windir, os.path.join(windir, "System32"), os.path.join(drive, "Users"),
-        env.get("ProgramFiles", ""), env.get("ProgramFiles(x86)", ""), env.get("ProgramW6432", ""),
-        env.get("ProgramData", ""), env.get("PUBLIC", ""), env.get("APPDATA", ""),
-        env.get("LOCALAPPDATA", ""), env.get("TEMP", ""), env.get("TMP", ""), profile,
-    ]
-    if profile:
-        paths += [os.path.join(profile, d) for d in
-                  ("Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos", "OneDrive")]
-    return frozenset(_norm(p) for p in paths if p)
+    return frozenset(_norm(p) for p in plat.protected_paths() if p)
 
 
 def is_safe(path: str) -> bool:

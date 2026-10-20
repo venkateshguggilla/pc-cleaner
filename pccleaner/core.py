@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
-from . import fsutil, regutil
+from . import fsutil
 from .stats import Stats
 
 
@@ -43,10 +43,13 @@ class RegKeys:
         self.keys = keys
         self.count = count
 
+    # regutil is imported where it's used: the registry only exists on Windows
     def scan(self) -> Stats:
+        from . import regutil
         return Stats(entries=sum(regutil.count_entries(k, self.count) for k in self.keys))
 
     def clean(self) -> Stats:
+        from . import regutil
         stats = self.scan()
         for key in self.keys:
             regutil.clear(key)

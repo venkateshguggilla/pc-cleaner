@@ -1,7 +1,6 @@
 """User interface (tkinter + ttkbootstrap): pick items on the left, Analyze, then Clean."""
 from __future__ import annotations
 
-import ctypes
 import os
 import queue
 import sys
@@ -12,7 +11,8 @@ from tkinter import filedialog, messagebox
 
 import ttkbootstrap as tb
 
-from . import largefiles, report, scheduler, settings, winutil
+from . import largefiles, report, scheduler, settings
+from . import platform as plat
 from .cleaners import build_catalog, winapp2
 from .core import Target
 from .stats import Stats, human_size
@@ -63,10 +63,9 @@ def _match_title_bar(window) -> None:
         return  # already matching (windows start with a light frame)
     try:
         window.update_idletasks()
-        hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
-        winutil.set_dark_title_bar(hwnd, dark)
+        plat.set_dark_title_bar(window, dark)
         window._dark_frame = dark
-        if window.winfo_viewable():
+        if plat.NAME == "windows" and window.winfo_viewable():
             # Windows 10 only repaints the frame when the window is shown again
             window.withdraw()
             window.deiconify()
@@ -129,7 +128,7 @@ class App(tb.Window):
         except tk.TclError:
             pass
 
-        self.is_admin = winutil.is_admin()
+        self.is_admin = plat.is_admin()
         self.targets = build_catalog()
         self.by_id = {t.id: t for t in self.targets}
         self.checked = self._load_selection()
@@ -433,7 +432,7 @@ class App(tb.Window):
             self._run(mode, selected)
             return
 
-        running = winutil.running_processes()
+        running = plat.running_processes()
         blocked = [t for t in selected if any(p in running for p in t.processes)]
         to_close = sorted({p for t in blocked for p in t.processes if p in running})
         close_apps = False
@@ -474,7 +473,7 @@ class App(tb.Window):
         self._log(f"Closing {', '.join(app_name(p) for p in exes)}...")
 
         def work():
-            remaining = winutil.close_processes(exes)
+            remaining = plat.close_processes(exes)
             self.call_soon(self._after_close, selected, exes, remaining, False)
 
         threading.Thread(target=work, daemon=True).start()
@@ -491,7 +490,7 @@ class App(tb.Window):
                 self._log(f"Force closing {', '.join(app_name(p) for p in sorted(remaining))}...")
 
                 def work():
-                    still = winutil.kill_processes(remaining)
+                    still = plat.kill_processes(remaining)
                     self.call_soon(self._after_close, selected, exes, still, True)
 
                 threading.Thread(target=work, daemon=True).start()
@@ -521,7 +520,7 @@ class App(tb.Window):
         threading.Thread(target=self._work, args=(mode, selected), daemon=True).start()
 
     def _work(self, mode: str, targets: list[Target]):
-        running = winutil.running_processes() if mode == "scan" else set()
+        running = plat.running_processes() if mode == "scan" else set()
         total = Stats()
         for i, t in enumerate(targets):
             self.events.put(("progress", i, t))
@@ -612,13 +611,13 @@ class App(tb.Window):
 
     def _open_reports(self):
         os.makedirs(settings.LOG_DIR, exist_ok=True)
-        os.startfile(settings.LOG_DIR)
+        plat.open_folder(settings.LOG_DIR)
 
     def ticked_targets(self) -> list[Target]:
         return [t for t in self.targets if self.checked.get(t.id) and self._usable(t)]
 
     def _elevate(self):
-        if winutil.relaunch_as_admin():
+        if plat.relaunch_as_admin():
             self._on_close()
         else:
             messagebox.showwarning("PC Cleaner", "Could not restart as administrator.", parent=self)
@@ -912,7 +911,7 @@ class LargeFilesWindow(tb.Toplevel):
     def _show(self):
         selected = self.tree.selection()
         if selected:
-            winutil.show_in_explorer(selected[0])
+            plat.show_in_file_manager(selected[0])
 
     def _recycle(self):
         paths = list(self.tree.selection())
@@ -931,7 +930,7 @@ class LargeFilesWindow(tb.Toplevel):
                 "You can restore them from the Recycle Bin. Space is freed when the bin is emptied.",
                 icon="warning", parent=self):
             return
-        left = set(winutil.send_to_recycle_bin(paths, hwnd=self.winfo_id()))
+        left = set(plat.send_to_trash(paths, window=self))
         moved = [p for p in paths if p not in left]
         if moved:
             report.write("Large files sent to Recycle Bin",

@@ -80,7 +80,7 @@ class CleanFlowTests(unittest.TestCase):
                    mock.patch("pccleaner.gui.settings.load", return_value={}),
                    mock.patch("pccleaner.gui.settings.update"),
                    mock.patch("pccleaner.gui.report.write", return_value="report.log"),
-                   mock.patch("pccleaner.gui.winutil.running_processes", return_value={"browser.exe"})]
+                   mock.patch("pccleaner.gui.plat.running_processes", return_value={"browser.exe"})]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -106,9 +106,9 @@ class CleanFlowTests(unittest.TestCase):
         asks = {"Close programs?": close_answer, "Confirm cleaning": True, "Force close?": force_answer}
         with mock.patch.object(self.gui.messagebox, "askyesnocancel", side_effect=lambda t, *a, **k: asks[t]), \
                 mock.patch.object(self.gui.messagebox, "askyesno", side_effect=lambda t, *a, **k: asks[t]), \
-                mock.patch.object(self.gui.winutil, "close_processes",
+                mock.patch.object(self.gui.plat, "close_processes",
                                   return_value=set() if closes else {"browser.exe"}) as close, \
-                mock.patch.object(self.gui.winutil, "kill_processes",
+                mock.patch.object(self.gui.plat, "kill_processes",
                                   return_value=set() if force_works else {"browser.exe"}) as kill:
             self.app._start("clean")
             self.run_until_idle()

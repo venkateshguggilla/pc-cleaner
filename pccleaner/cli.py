@@ -6,7 +6,8 @@ import os
 import sys
 import time
 
-from . import report, winutil
+from . import platform as plat
+from . import report
 from .cleaners import build_catalog
 from .stats import Stats, human_size
 
@@ -19,42 +20,6 @@ def _pick(targets, ids):
     if unknown:
         raise SystemExit(f"Unknown id(s): {', '.join(unknown)}  (see: python -m pccleaner list)")
     return [by_id[i] for i in ids]
-
-
-def shortcut_paths(desktop: bool) -> list[str]:
-    start_menu = os.path.join(os.environ["APPDATA"], r"Microsoft\Windows\Start Menu\Programs")
-    paths = [os.path.join(start_menu, "PC Cleaner.lnk")]
-    if desktop:
-        folder = winutil.known_folder("B4BFCC3A-DB2C-424C-B029-7FE99A87C641") or \
-            os.path.join(os.environ["USERPROFILE"], "Desktop")
-        paths.append(os.path.join(folder, "PC Cleaner.lnk"))
-    return paths
-
-
-def install_shortcuts(desktop: bool = False, remove: bool = False) -> int:
-    """Shortcuts that start the app through Python's own signed pythonw.exe, so it runs on
-    PCs where Smart App Control blocks the unsigned PCCleaner.exe."""
-    if getattr(sys, "frozen", False):
-        print("This is the packaged exe - use the installer for shortcuts.")
-        return 1
-    paths = shortcut_paths(desktop=desktop or remove)
-    if remove:
-        for path in paths:
-            if os.path.exists(path):
-                os.remove(path)
-                print(f"Removed {path}")
-        return 0
-    project = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-    if not os.path.exists(pythonw):
-        print(f"pythonw.exe not found next to {sys.executable}")
-        return 1
-    for path in paths:
-        winutil.create_shortcut(path, pythonw, "-m pccleaner", project,
-                                os.path.join(project, "assets", "pccleaner.ico"), "PC Cleaner")
-        print(f"Created {path}")
-    print("Open PC Cleaner from the Start menu.")
-    return 0
 
 
 def main(argv=None) -> int:
@@ -89,7 +54,7 @@ def main(argv=None) -> int:
         return 0
 
     if args.cmd == "install-shortcut":
-        return install_shortcuts(desktop=args.desktop, remove=args.remove)
+        return plat.install_shortcuts(desktop=args.desktop, remove=args.remove)
 
     if args.cmd == "large":
         from . import largefiles
@@ -133,7 +98,7 @@ def main(argv=None) -> int:
         return 0
 
     selected = _pick(targets, args.ids)
-    admin = winutil.is_admin()
+    admin = plat.is_admin()
     skipped_admin = [t for t in selected if t.admin and not admin]
     selected = [t for t in selected if t not in skipped_admin]
     for t in skipped_admin:
@@ -144,7 +109,7 @@ def main(argv=None) -> int:
         if input("Continue? [y/N] ").strip().lower() != "y":
             return 1
 
-    running = winutil.running_processes()
+    running = plat.running_processes()
     total = Stats()
     rows = []
     for t in selected:

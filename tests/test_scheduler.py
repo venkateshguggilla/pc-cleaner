@@ -1,6 +1,7 @@
 """Scheduler tests: XML generation, unattended runs (mocked catalog) and reports."""
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -10,15 +11,19 @@ from pccleaner import report, scheduler, settings
 from pccleaner.core import Custom, Target
 from pccleaner.stats import Stats
 
+if sys.platform == "win32":
+    from pccleaner.platform import windows
+
 NS = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
 
 
+@unittest.skipUnless(sys.platform == "win32", "Windows Task Scheduler")
 class TaskXmlTests(unittest.TestCase):
     def parse(self, xml):
         return ET.fromstring(xml.split("?>", 1)[1])
 
     def test_weekly(self):
-        root = self.parse(scheduler.task_xml("weekly", "21:30", "Sunday"))
+        root = self.parse(windows.task_xml("weekly", "21:30", "Sunday"))
         trigger = root.find("t:Triggers/t:CalendarTrigger", NS)
         self.assertTrue(trigger.find("t:StartBoundary", NS).text.endswith("T21:30:00"))
         self.assertIsNotNone(trigger.find("t:ScheduleByWeek/t:DaysOfWeek/t:Sunday", NS))
@@ -30,15 +35,15 @@ class TaskXmlTests(unittest.TestCase):
         self.assertTrue(os.path.isdir(exec_.find("t:WorkingDirectory", NS).text))
 
     def test_daily_elevated(self):
-        root = self.parse(scheduler.task_xml("daily", "07:05", elevated=True))
+        root = self.parse(windows.task_xml("daily", "07:05", elevated=True))
         self.assertIsNotNone(root.find("t:Triggers/t:CalendarTrigger/t:ScheduleByDay", NS))
         self.assertEqual(root.find("t:Principals/t:Principal/t:RunLevel", NS).text, "HighestAvailable")
 
     def test_bad_input(self):
         with self.assertRaises(ValueError):
-            scheduler.task_xml("hourly", "10:00")
+            windows.task_xml("hourly", "10:00")
         with self.assertRaises(ValueError):
-            scheduler.task_xml("weekly", "10:00", "Funday")
+            windows.task_xml("weekly", "10:00", "Funday")
 
 
 class ScheduledRunTests(unittest.TestCase):
@@ -62,8 +67,8 @@ class ScheduledRunTests(unittest.TestCase):
                    self.target("adm", admin=True), self.target("not_scheduled")]
         settings.update(checked={"x": True}, schedule={"items": ["a", "b", "busy", "adm", "gone"]})
         with mock.patch("pccleaner.cleaners.build_catalog", return_value=catalog), \
-                mock.patch.object(scheduler.winutil, "is_admin", return_value=False), \
-                mock.patch.object(scheduler.winutil, "running_processes", return_value={"editor.exe"}):
+                mock.patch.object(scheduler.plat, "is_admin", return_value=False), \
+                mock.patch.object(scheduler.plat, "running_processes", return_value={"editor.exe"}):
             path = scheduler.run_scheduled()
 
         self.assertEqual(self.cleaned, ["a", "b"])

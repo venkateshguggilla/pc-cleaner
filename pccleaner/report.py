@@ -1,4 +1,4 @@
-"""Plain-text reports of each cleaning run in %APPDATA%\\PCCleaner\\logs."""
+"""Plain-text reports of each cleaning run, in the logs folder next to settings.json."""
 from __future__ import annotations
 
 import datetime

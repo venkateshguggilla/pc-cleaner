@@ -1,10 +1,15 @@
-"""Persistent settings in %APPDATA%\\PCCleaner\\settings.json (shared by the GUI and the scheduler)."""
+"""Persistent settings in settings.json (shared by the GUI and the scheduler).
+
+The folder is platform.app_dir(): %APPDATA%\\PCCleaner on Windows, ~/.config/pccleaner on Linux.
+"""
 from __future__ import annotations
 
 import json
 import os
 
-APP_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "PCCleaner")
+from . import platform as plat
+
+APP_DIR = plat.app_dir()
 SETTINGS_FILE = os.path.join(APP_DIR, "settings.json")
 LOG_DIR = os.path.join(APP_DIR, "logs")
 
